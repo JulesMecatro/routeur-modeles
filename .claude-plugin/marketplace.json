@@ -1,0 +1,11 @@
+{
+  "name": "routeur-modeles",
+  "owner": { "name": "jules" },
+  "plugins": [
+    {
+      "name": "routeur-modeles",
+      "source": "./",
+      "description": "Route chaque tâche vers haiku, sonnet ou opus selon sa complexité ; /force impose un modèle"
+    }
+  ]
+}

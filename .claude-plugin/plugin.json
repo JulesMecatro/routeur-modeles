@@ -1,0 +1,6 @@
+{
+  "name": "routeur-modeles",
+  "version": "0.1.0",
+  "description": "Envoie chaque tâche sur haiku, sonnet ou opus selon sa complexité ; /force pour imposer un modèle",
+  "types": "./types/index.d.ts"
+}
