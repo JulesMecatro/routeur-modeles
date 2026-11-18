@@ -25,6 +25,6 @@ La table `MODELES` dans `hooks/register.tsx` définit le modèle de chaque nivea
 Dans Claude Code :
 
 ```
-/plugin marketplace add <propriétaire>/routeur-modeles
+/plugin marketplace add JulesMecatro/routeur-modeles
 /plugin install routeur-modeles@routeur-modeles
 ```
