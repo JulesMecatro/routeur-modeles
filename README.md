@@ -2,6 +2,9 @@
 
 Mod pour Claude Code : envoie chaque tâche sur le modèle adapté à sa complexité.
 
+- **Sous-agents :** routés selon la complexité, vers le haut comme vers le bas.
+- **Conversation principale :** garde le modèle de la session et ne fait que **monter** quand une demande est plus complexe. Elle ne redescend jamais.
+
 | Niveau   | Exemples                                                      | Modèle |
 |----------|---------------------------------------------------------------|--------|
 | simple   | « ok », question courte, petite modif évidente                | haiku  |
@@ -14,9 +17,9 @@ Le niveau est estimé par un appel à Haiku. Les cas évidents (« ok », « mer
 
 Le mod ne réduit pas le nombre de tokens : il fait passer les tâches simples sur des modèles moins chers.
 
-- **Sous-agents :** ils partent d'un contexte vide, donc changer de modèle ne coûte rien. C'est là que le gain est le plus net.
-- **Conversation principale :** le cache de contexte est propre à chaque modèle. Changer de modèle fait relire toute la conversation au prix plein. Au-delà de 30 messages, le mod ne redescend donc plus vers un modèle moins cher. Il peut encore monter si une tâche l'exige. La ligne d'état affiche alors « gardé · contexte long ».
-- **Grosse tâche longue :** un `/force opus` en début de tâche évite les allers-retours entre modèles.
+- **Sous-agents :** ils partent d'un contexte vide, donc changer de modèle ne coûte rien. C'est là que le gain est le plus net : une tâche simple part sur haiku, une tâche lourde sur opus.
+- **Conversation principale :** le cache de contexte est propre à chaque modèle, et changer de modèle fait relire toute la conversation au prix plein. Le mod ne redescend donc jamais. Il monte seulement quand une demande l'exige, et la ligne d'état affiche alors « monté ».
+- **Déjà sur opus :** aucun appel de classement n'est fait, puisqu'il n'y a rien à monter.
 
 ## Commandes
 
@@ -26,10 +29,7 @@ Le mod ne réduit pas le nombre de tokens : il fait passer les tâches simples s
 
 ## Personnaliser
 
-Dans `hooks/register.tsx` :
-
-- la table `MODELES` définit le modèle de chaque niveau ;
-- `SEUIL_CONTEXTE` (30 par défaut) fixe le nombre de messages à partir duquel le mod ne redescend plus de modèle.
+La table `MODELES` dans `hooks/register.tsx` définit le modèle de chaque niveau.
 
 ## Installation
 

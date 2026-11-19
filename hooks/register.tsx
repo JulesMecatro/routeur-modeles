@@ -10,22 +10,18 @@ const MODELES: Record<Niveau, string> = {
   complexe: 'opus',
 }
 const CONNUS = ['haiku', 'sonnet', 'opus', 'fable']
-// Du moins cher au plus cher : sert à savoir si un changement « descend ».
+// Du moins cher au plus cher : sert à savoir si un changement « monte ».
 const ORDRE = ['haiku', 'sonnet', 'opus', 'fable']
-// Au-delà de ce nombre de messages, le cache de la conversation vaut plus
-// que l'écart de prix : on ne redescend plus vers un modèle moins cher.
-const SEUIL_CONTEXTE = 30
 
 const force = atom({ plugin: 'routeur-modeles', key: 'force' } as const, null, { shape: 'force-1' })
-const route = atom({ plugin: 'routeur-modeles', key: 'route' } as const, null, { shape: 'route-2' })
-const actif = atom({ plugin: 'routeur-modeles', key: 'actif' } as const, null, { shape: 'actif-1' })
-const taille = atom({ plugin: 'routeur-modeles', key: 'taille' } as const, 0, { shape: 'taille-1' })
+const route = atom({ plugin: 'routeur-modeles', key: 'route' } as const, null, { shape: 'route-3' })
 
 // Mots qui signalent un gros chantier, et réponses courtes évidentes.
 const LOURD =
   /refactor|architect|migr|conçoi|concevoir|implément|plan |sécurité|audit|optimis|debug|bug|pourquoi|plusieurs fichiers|tout le projet/i
 const EVIDENT = /^(ok|oui|non|merci|salut|hey|go|vas-y|c'est bon|parfait|top|super)\b/i
 
+// Un modèle inconnu compte comme le plus haut : on ne le « monte » jamais.
 function rang(modele: string): number {
   const i = ORDRE.findIndex(m => modele.includes(m))
   return i === -1 ? ORDRE.length : i
@@ -66,9 +62,8 @@ ${t.slice(0, 4000)}`,
 
 function afficher($: EngineInterface, imposé: string | null, r: Route | null) {
   if (imposé) $.ui.status(`modèle : ${imposé} (forcé)`)
-  else if (r?.garde) $.ui.status(`modèle : ${r.modele} (gardé · contexte long)`)
-  else if (r) $.ui.status(`modèle : ${r.modele} (auto · ${r.niveau})`)
-  else $.ui.status('modèle : auto')
+  else if (r) $.ui.status(`modèle : ${r.modele} (monté · ${r.niveau})`)
+  else $.ui.status('modèle : session (monte seul si besoin)')
 }
 
 async function traiterForce($: EngineInterface, args: string): Promise<string> {
@@ -78,9 +73,10 @@ async function traiterForce($: EngineInterface, args: string): Promise<string> {
     const imposé = await read($, force)
     if (imposé) return `Modèle forcé : ${imposé}. Tape /force auto pour revenir au routage.`
     const r = await read($, route)
-    const base = `Routage auto (simple → ${MODELES.simple}, moyen → ${MODELES.moyen}, complexe → ${MODELES.complexe} ; au-delà de ${SEUIL_CONTEXTE} messages, pas de retour vers un modèle moins cher).`
-    if (!r) return base
-    return `${base} Dernière tâche : ${r.niveau} → ${r.modele}${r.garde ? ' (gardé pour le cache)' : ''}.`
+    const base =
+      `Routage auto : la conversation principale garde le modèle de la session et ne fait que monter, jamais descendre. ` +
+      `Sous-agents routés selon la complexité (simple → ${MODELES.simple}, moyen → ${MODELES.moyen}, complexe → ${MODELES.complexe}).`
+    return r ? `${base} Dernière montée : ${r.niveau} → ${r.modele}.` : base
   }
 
   if (choix === 'auto') {
@@ -114,7 +110,9 @@ export const register: Register = on => {
     text: await traiterForce($, e.args),
   }))
 
-  // Classe chaque prompt tapé (pas les commandes ni les messages système).
+  // Conversation principale : on estime chaque prompt tapé, et on ne retient
+  // que les montées (jamais de descente : le cache de la conversation est
+  // propre à chaque modèle, redescendre ferait tout relire au prix plein).
   on('prompt.submit', async ($, e, next) => {
     // /force tapé alors que l'app ne connaît pas la commande : on la traite ici.
     const m = !e.command && e.text.trim().match(/^\/force(?:\s+([\s\S]*))?$/i)
@@ -126,37 +124,38 @@ export const register: Register = on => {
     if (e.command || e.isMeta || e.origin.kind !== 'composer') return next(e)
     if (await read($, force)) return next(e)
 
+    const session = await $.session.model()
+    const palier = await read($, route)
+    const courant = palier && rang(palier.modele) > rang(session) ? palier.modele : session
+    // Déjà au sommet : rien à monter, donc pas d'appel au classifieur.
+    if (rang(courant) >= rang(MODELES.complexe)) return next(e)
+
     const niveau = await classer($, e.text)
     const cible = MODELES[niveau]
-    const courant = await read($, actif)
-    // Conversation longue : redescendre ferait relire tout le contexte au prix
-    // plein sur un autre modèle, ce qui coûte plus que l'écart de prix.
-    const garde =
-      courant !== null &&
-      (await read($, taille)) >= SEUIL_CONTEXTE &&
-      rang(cible) < rang(courant)
-    const r: Route = { niveau, modele: garde && courant ? courant : cible, garde }
-    await update($, route, () => r)
-    afficher($, null, r)
+    if (rang(cible) > rang(courant)) {
+      const r: Route = { niveau, modele: cible }
+      await update($, route, () => r)
+      afficher($, null, r)
+    }
 
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // Chaque requête du fil principal part sur le modèle choisi ; on note sa
-  // taille et son modèle pour la décision du prompt suivant.
+  // Chaque requête du fil principal : on ne remplace le modèle de la session
+  // que par un modèle plus haut (la montée retenue, ou le modèle forcé).
   on('turn.step', async function* ($, e, next) {
     if (e.agentId !== undefined) return yield* next(e)
 
-    const modele = (await read($, force)) ?? (await read($, route))?.modele
-    await update($, taille, () => e.messageCount)
-    await update($, actif, () => modele ?? e.model)
+    const imposé = await read($, force)
+    const palier = await read($, route)
+    const modele = imposé ?? (palier && rang(palier.modele) > rang(e.model) ? palier.modele : undefined)
 
     return yield* next(modele ? { ...e, model: modele } : e)
   })
 
-  // Sous-agents : contexte neuf, donc pas de cache à perdre. C'est là que le
-  // routage rapporte le plus. Le modèle forcé s'impose ; sinon, s'ils n'en ont
-  // pas, on classe leur tâche.
+  // Sous-agents : c'est ici que le routage complet s'applique (montée et
+  // descente), car leur contexte est neuf et il n'y a pas de cache à perdre.
+  // Le modèle forcé s'impose ; sinon, s'ils n'en ont pas, on classe leur tâche.
   on('agent.spawn', async ($, e, next) => {
     const imposé = await read($, force)
     if (imposé) return next({ ...e, model: imposé })
